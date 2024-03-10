@@ -8,10 +8,11 @@ from bs4 import BeautifulSoup
 import re
 import glob
 
-def get_race_id_list():
+def get_race_id_list(start_year: int = 2024, end_year: int = 2025):
     race_id_list = []
-    for year in range(2023,2024,1):
+    for year in range(start_year,end_year,1):
         for place in range(1,11,1):
+        # 01 札幌, 02 函館, 03 福島, 04 新潟, 05 東京, 06 中山, 07 中京, 08 京都, 09 阪神, 10 小倉
             for kai in range(1,6,1):
                 for day in range(1,9,1):
                     for r in range(1,13,1):
@@ -30,7 +31,6 @@ def getHTMLRace(race_id_list: list,skip: bool = True):
         try:
             #check existance of page
             df = pd.read_html(url)
-            # file_name_list.append(file_name)
         except:
             print(f'{race_id} does not exist')
             if os.path.isfile(file_name):
@@ -45,7 +45,6 @@ def getHTMLRace(race_id_list: list,skip: bool = True):
             f.write(html)
             print(f'{file_name} write done')
         time.sleep(0.1)
-    # return file_name_list
 
 def getRawDataRaceResults(html_path_list: list):
     """
@@ -80,9 +79,7 @@ def getRawDataRaceResults(html_path_list: list):
                 df.index = [race_id] * len(df)
 
                 race_results[race_id] = df
-                print(html_path)
         except:
-            print(f'{html_path} is not exsist')
             os.remove(html_path)
     #pd.DataFrame型にして一つのデータにまとめる
     race_results_df = pd.concat([race_results[key] for key in race_results])
@@ -150,7 +147,6 @@ def getRawDataReturnTables(html_path_list:list):
                 race_id = re.findall('\d+', html_path)[0]
                 df.index = [race_id] * len(df)
                 return_tables[race_id] = df
-                print(html_path)
         except:
             print(f'{html_path} is not exsist')
             # os.remove(html_path)
@@ -197,7 +193,6 @@ def getRawDataHorse(html_path_list:list):
                 horse_id = re.findall('(?<=horse/)\d+', html_path)[0]            
                 df.index = [horse_id] * len(df)
                 horse_results[horse_id] = df
-                print(html_path)
         except:
             print(f'{html_path} is not exsist')
 
@@ -270,21 +265,75 @@ def update_date(old,new):
     filtered_old = old[~old.index.isin(new.index)]
     return pd.concat([filtered_old,new])
     
-#対象のレースに対して、そこに登場するhorse,pedsデータのみを取得するようにする
-# 以下wip
-def update_all_data(race_id_list):
-    race_id_list = get_race_id_list()
-    race_html_path_list = getHTMLRace(race_id_list)
-    print('get race HTML done!')
-    race_results = getRawDataRaceResults(race_html_path_list)
+def update_all_data(last_update_date: str, update_date: str):
+    all_race_id_list = get_race_id_list()
+    all_race_html_path_list = getHTMLRace(all_race_id_list)
+    print('get all race HTML done!')
+    
+    race_infos = getRawDataRaceInfos(all_race_html_path_list)
+    race_infos.to_pickle(f'data/raw/race_infos/race_infos_{update_date}.pickle')
+    print('get all race info done!')
 
+    race_infos = pd.read_pickle('data/raw/race_infos/race_infos.pickle')
+    race_infos['date'] = pd.to_datetime(race_infos['date'].str.replace('年', '-').str.replace('月', '-').str.replace('日', ''))
+    race_infos = race_infos[race_infos['date'] >= last_update_date]
+    update_race_id_list = race_infos.index.unique().tolist()
+    all_race_html_path_list = get_html_path_list('race')
+    update_race_html_path_list = []
+    for path in all_race_html_path_list:
+        race_id = path.split('/')[-1].split('.')[0]
+        if race_id in update_race_id_list:
+            update_race_html_path_list.append(path)
+        else:
+            pass
+    update_race_results = getRawDataRaceResults(update_race_html_path_list)
+    old_race_results = pd.read_pickle('data/raw/race_results/race_results.pickle')
+    latest_race_results = pd.concat([old_race_results, update_race_results])
+    latest_race_results.to_pickle(f'data/raw/race_results/race_results_{update_date}.pickle')
+    print('update race results done!')
 
+    update_return_tables = getRawDataReturnTables(update_race_html_path_list)
+    old_return_tables = pd.read_pickle('data/raw/return_tables/return_tables.pickle')
+    latest_return_tables = pd.concat([old_return_tables, update_return_tables])
+    latest_return_tables.to_pickle(f'data/raw/return_tables/return_tables_{update_date}.pickle')
+    print('update return tables done!')
 
+    update_horse_id_list = update_race_results['horse_id'].unique().tolist()
+    getHTMLHorse(update_horse_id_list)
+    all_horse_html_path_list = get_html_path_list('horse')
+    update_horse_html_path_list = []
+    for path in all_horse_html_path_list:
+        horse_id = path.split('/')[-1].split('.')[0]
+        if horse_id in update_horse_id_list:
+            update_horse_html_path_list.append(path)
+        else:
+            pass
+    update_horse = getRawDataHorse(update_horse_html_path_list)
+    old_horse = pd.read_pickle('data/raw/horses/horses.pickle')
+    latest_horse = pd.concat([old_horse, update_horse])
+    latest_horse.to_pickle(f'data/raw/horses/horses_{update_date}.pickle')
+    print('update horse done!')
+    
+    getHTMLPed(update_horse_id_list)
+    all_ped_html_path_list = get_html_path_list('ped')
+    update_ped_html_path_list = []
+    for path in all_ped_html_path_list:
+        horse_id = path.split('/')[-1].split('.')[0]
+        if horse_id in update_horse_id_list:
+            update_ped_html_path_list.append(path)
+        else:
+            pass
+    update_ped = getRawDataPeds(update_ped_html_path_list)
+    old_ped = pd.read_pickle('data/raw/peds/peds.pickle')
+    latest_ped = pd.concat([old_ped, update_ped])
+    latest_ped.to_pickle(f'data/raw/peds/peds_{update_date}.pickle')
+    print('update ped done!')
 
 def main():
     race_id_list = get_race_id_list()
     getHTMLRace(race_id_list)
     print('get race HTML done!')
+    
     race_html_path_list = get_html_path_list('race')
     print('get race_html_path_list')
     race_results = getRawDataRaceResults(race_html_path_list)
